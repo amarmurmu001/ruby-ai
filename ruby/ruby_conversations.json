@@ -100,6 +100,38 @@
         {
           "role": "assistant",
           "content": "Opened: C:\\Users\\iron5\\AppData\\Local\\Temp\\ruby_screenshot.png"
+        },
+        {
+          "role": "user",
+          "content": "hay Rubi"
+        },
+        {
+          "role": "assistant",
+          "content": "Boss. Always a pleasure. Standing by and ready for action — what's the next move?"
+        },
+        {
+          "role": "user",
+          "content": "search Amar murmu on YouTube"
+        },
+        {
+          "role": "assistant",
+          "content": "Let me open that search in your browser instead, Boss."
+        },
+        {
+          "role": "user",
+          "content": "take a screenshot"
+        },
+        {
+          "role": "assistant",
+          "content": "Screenshot captured and saved, Boss."
+        },
+        {
+          "role": "user",
+          "content": "open D screenshot"
+        },
+        {
+          "role": "assistant",
+          "content": "Screenshot opened, Boss."
         }
       ]
     }
