@@ -1,6 +1,7 @@
 import tkinter as tk
 import sys
 import ctypes
+import re
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -16,6 +17,53 @@ from gui.widgets.input_bar import InputBar
 from gui.widgets.visualizer import WaveVisualizer
 from gui.widgets.tray import SystemTray
 from gui.widgets.settings import SettingsPanel
+
+def voice_summary(text: str, max_chars: int = 300) -> str:
+    stripped = re.sub(r"```[\s\S]*?```", "", text)
+    stripped = re.sub(r"`[^`]+`", "", stripped)
+    stripped = re.sub(r"\[Source:.*?\]", "", stripped)
+    stripped = re.sub(r"^---\s*$", "", stripped, flags=re.MULTILINE)
+    stripped = re.sub(r"http[s]?://\S+", "", stripped)
+    stripped = re.sub(r"[A-Z]:\\[^\s,;)]+", "", stripped)
+    stripped = re.sub(r"/[a-zA-Z0-9_\-./]+\.\w{2,4}", "", stripped)
+
+    lines = []
+    for line in stripped.split("\n"):
+        clean = line.strip()
+        if not clean:
+            continue
+        if clean.startswith("- ") or clean.startswith("* "):
+            continue
+        if re.match(r"^\d+[.)]", clean):
+            continue
+        lines.append(clean)
+
+    summary = " ".join(lines)
+    summary = re.sub(r"\s+", " ", summary).strip()
+    if len(summary) > max_chars:
+        summary = summary[:max_chars].rsplit(". ", 1)[0]
+        if not summary.endswith("."):
+            summary = summary[:max_chars].rsplit("?", 1)[0]
+        if not summary:
+            summary = text.split(". ")[0] + "."
+    return summary
+
+
+def _check_deps() -> list[str]:
+    missing = []
+    checks = [
+        ("numpy", "numpy", "array ops"),
+        ("requests", "requests", "HTTP/API"),
+        ("sounddevice", "sounddevice", "mic input"),
+        ("speech_recognition", "speech_recognition", "STT"),
+        ("duckduckgo_search", "duckduckgo_search", "web search"),
+    ]
+    for name, pkg, purpose in checks:
+        try:
+            __import__(name)
+        except ImportError:
+            missing.append(f"  {pkg} — {purpose}")
+    return missing
 
 
 def _try_dark_title_bar(hwnd: int) -> bool:
@@ -33,6 +81,13 @@ def _try_dark_title_bar(hwnd: int) -> bool:
 
 class RubyGUI:
     def __init__(self):
+        missing = _check_deps()
+        if missing:
+            msg = "Missing dependencies:\n" + "\n".join(missing)
+            msg += "\n\nRun: pip install " + " ".join(m.split(" — ")[0] for m in missing)
+            import tkinter.messagebox as mb
+            mb.showerror("Ruby — Dependencies Missing", msg)
+
         self.ctrl = Controller()
 
         self.root = tk.Tk()
@@ -91,7 +146,9 @@ class RubyGUI:
         self._main_row = row
         row += 1
 
-        self.sidebar = Sidebar(main_frame, self.ctrl, on_switch_conv=self._on_switch_conv)
+        self.sidebar = Sidebar(main_frame, self.ctrl,
+                               on_switch_conv=self._on_switch_conv,
+                               on_delete_conv=self._on_delete_conv)
         self.chat = ChatPanel(main_frame)
         self.info = InfoPanel(main_frame, self.ctrl)
         self.settings = SettingsPanel(self.root, self.ctrl)
@@ -130,8 +187,12 @@ class RubyGUI:
     def _on_escape(self, event=None):
         if self.settings.visible:
             self.settings.hide()
-        else:
-            self.root.destroy()
+        elif hasattr(self, "tray") and self.tray and self.tray._icon:
+            self._minimize_to_tray()
+
+    def _on_delete_conv(self, conv_id: str):
+        self.chat.clear_all()
+        self._show_welcome()
 
     def _on_switch_conv(self, conv_id: str):
         self.chat.clear_all()
@@ -154,6 +215,7 @@ class RubyGUI:
         self.root.bind("<Escape>", self._on_escape)
         self.root.bind("<Control-m>", lambda e: self._on_mic_press())
         self.root.bind("<Control-comma>", lambda e: self.settings.toggle())
+        self.root.bind("<Control-f>", lambda e: self.chat.show_search())
         self.root.bind("<Control-Up>", lambda e: self._focus_input())
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
 
@@ -242,9 +304,13 @@ class RubyGUI:
         if self.ctrl.voice and self.ctrl.voice.enabled:
             self.is_processing = True
             self.status_bar.show_cancel(False)
-            self.ctrl.speak(text)
-            delay = max(2000, len(text) * 60)
-            self.root.after(delay, lambda: setattr(self, "is_processing", False))
+            speech = voice_summary(text)
+            if speech:
+                self.ctrl.speak(speech)
+                delay = max(2000, len(speech) * 60)
+                self.root.after(delay, lambda: setattr(self, "is_processing", False))
+            else:
+                self.root.after(50, lambda: setattr(self, "is_processing", False))
 
     def _on_mic_press(self):
         if self.mic_active or not self.ctrl.has_mic:

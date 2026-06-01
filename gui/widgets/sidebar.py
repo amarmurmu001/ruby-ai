@@ -7,9 +7,10 @@ from ..theme import Theme
 class Sidebar:
     WIDTH = 220
 
-    def __init__(self, parent, controller, on_switch_conv=None):
+    def __init__(self, parent, controller, on_switch_conv=None, on_delete_conv=None):
         self.controller = controller
         self.on_switch_conv = on_switch_conv
+        self.on_delete_conv = on_delete_conv
         self.visible = True
         self._current_section = "chats"
 
@@ -62,9 +63,11 @@ class Sidebar:
         f = (Theme.FONT_FAMILY, 9)
         bf = (Theme.FONT_FAMILY, 9, "bold")
 
-        tk.Label(self._content_frame, text="conversations", font=bf,
+        header = tk.Frame(self._content_frame, bg=Theme.BG_PANEL)
+        header.pack(fill="x", pady=(0, 4))
+        tk.Label(header, text="conversations", font=bf,
                  fg=Theme.TEXT_DIM, bg=Theme.BG_PANEL, anchor="w"
-                 ).pack(fill="x", pady=(0, 4))
+                 ).pack(side="left")
 
         convos = self.controller.brain.get_conversations() if self.controller.brain else []
         if not convos:
@@ -72,6 +75,11 @@ class Sidebar:
                      fg=Theme.TEXT_DIM, bg=Theme.BG_PANEL, anchor="w"
                      ).pack(fill="x")
             return
+
+        menu = tk.Menu(self._content_frame, tearoff=0,
+                       bg=Theme.BG_MED, fg=Theme.TEXT_PRIMARY,
+                       font=f, activebackground=Theme.BG_LIGHT,
+                       activeforeground=Theme.ACCENT)
 
         for c in convos[:20]:
             row = tk.Frame(self._content_frame, bg=Theme.BG_PANEL)
@@ -83,11 +91,26 @@ class Sidebar:
                            fg=Theme.ACCENT if c["active"] else Theme.TEXT_DIM,
                            bg=Theme.BG_PANEL, anchor="w", cursor="hand2")
             lbl.pack(side="left", fill="x", expand=True)
-            if not c["active"]:
-                lbl.bind("<Button-1>", lambda e, cid=c["id"]: self._switch_conv(cid))
-                lbl.bind("<Enter>", lambda e: e.widget.config(fg=Theme.ACCENT))
-                lbl.bind("<Leave>", lambda e, cid=c["id"]: e.widget.config(
-                    fg=Theme.TEXT_DIM))
+
+            def make_switch(cid):
+                return lambda e: self._switch_conv(cid)
+
+            def make_menu(cid):
+                def show_menu(event):
+                    menu.delete(0, "end")
+                    menu.add_command(label="Switch", command=lambda: self._switch_conv(cid))
+                    menu.add_separator()
+                    menu.add_command(label="Delete", command=lambda: self._delete_conv(cid))
+                    menu.post(event.x_root, event.y_root)
+                return show_menu
+
+            if c["active"]:
+                lbl.bind("<Button-3>", make_menu(c["id"]))
+            else:
+                lbl.bind("<Button-1>", make_switch(c["id"]))
+                lbl.bind("<Button-3>", make_menu(c["id"]))
+            lbl.bind("<Enter>", lambda e: e.widget.config(fg=Theme.ACCENT))
+            lbl.bind("<Leave>", lambda e: e.widget.config(fg=Theme.TEXT_DIM))
 
     def _draw_tools(self):
         f = (Theme.FONT_FAMILY, 9)
@@ -207,6 +230,11 @@ class Sidebar:
         if self.controller.brain and self.on_switch_conv:
             self.controller.brain.switch_conversation(conv_id)
             self.on_switch_conv(conv_id)
+
+    def _delete_conv(self, conv_id: str):
+        if self.controller.brain:
+            self.controller.brain.delete_conversation(conv_id)
+        self.refresh()
 
     def refresh(self):
         self._show_section(self._current_section)

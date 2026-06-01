@@ -14,6 +14,8 @@ class InputBar:
         self.frame.grid(row=0, column=0, sticky="ew")
         self.frame.grid_propagate(False)
 
+        self._history = []
+        self._history_index = -1
         self._build()
 
     def _build(self):
@@ -35,6 +37,8 @@ class InputBar:
         self.entry.pack(side="left", fill="x", expand=True)
         self.entry.bind("<Return>", self._on_enter)
         self.entry.bind("<Shift-Return>", lambda e: self.entry.insert("insert", "\n"))
+        self.entry.bind("<Up>", self._on_history_up)
+        self.entry.bind("<Down>", self._on_history_down)
         self.entry.focus_set()
 
         self.mic_btn = tk.Label(outer, text="<mic>",
@@ -50,9 +54,31 @@ class InputBar:
             self._send()
             return "break"
 
+    def _on_history_up(self, event):
+        if not self._history:
+            return "break"
+        if self._history_index < len(self._history) - 1:
+            self._history_index += 1
+        self.entry.delete("1.0", "end")
+        self.entry.insert("1.0", self._history[-(self._history_index + 1)])
+        self.entry.mark_set("insert", "end")
+        return "break"
+
+    def _on_history_down(self, event):
+        if self._history_index < 0:
+            return "break"
+        self._history_index -= 1
+        self.entry.delete("1.0", "end")
+        if self._history_index >= 0:
+            self.entry.insert("1.0", self._history[-(self._history_index + 1)])
+        self.entry.mark_set("insert", "end")
+        return "break"
+
     def _send(self):
         text = self.entry.get("1.0", "end-1c").strip()
         if text:
+            self._history.append(text)
+            self._history_index = -1
             self.entry.delete("1.0", "end")
             self.on_send(text)
 
