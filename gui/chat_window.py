@@ -15,6 +15,7 @@ from gui.widgets.info_panel import InfoPanel
 from gui.widgets.input_bar import InputBar
 from gui.widgets.visualizer import WaveVisualizer
 from gui.widgets.tray import SystemTray
+from gui.widgets.settings import SettingsPanel
 
 
 def _try_dark_title_bar(hwnd: int) -> bool:
@@ -56,6 +57,7 @@ class RubyGUI:
         self.wake_enabled = False
         self.is_processing = False
         self.anim_start = 0.0
+        self._cancel_btn = None
 
         self._build_layout()
         self._bind_events()
@@ -75,7 +77,7 @@ class RubyGUI:
             self.root.rowconfigure(row, weight=0)
             row += 1
 
-        self.status_bar = StatusBar(self.root, self.ctrl)
+        self.status_bar = StatusBar(self.root, self.ctrl, on_cancel=self._on_cancel_think)
         self.status_bar.frame.grid(row=row, column=0, sticky="ew")
         self.root.rowconfigure(row, weight=0)
         self._status_row = row
@@ -89,9 +91,10 @@ class RubyGUI:
         self._main_row = row
         row += 1
 
-        self.sidebar = Sidebar(main_frame, self.ctrl)
+        self.sidebar = Sidebar(main_frame, self.ctrl, on_switch_conv=self._on_switch_conv)
         self.chat = ChatPanel(main_frame)
         self.info = InfoPanel(main_frame, self.ctrl)
+        self.settings = SettingsPanel(self.root, self.ctrl)
 
         self.visualizer = WaveVisualizer(self.root)
         self.visualizer.frame.grid(row=row, column=0, sticky="ew")
@@ -124,6 +127,23 @@ class RubyGUI:
             self.sidebar.toggle_on()
             self.info.toggle_on()
 
+    def _on_escape(self, event=None):
+        if self.settings.visible:
+            self.settings.hide()
+        else:
+            self.root.destroy()
+
+    def _on_switch_conv(self, conv_id: str):
+        self.chat.clear_all()
+        conv = self.ctrl.brain._current_messages()
+        for msg in conv:
+            if msg["role"] == "user":
+                self.chat.add("user", "AMAR", msg["content"])
+            elif msg["role"] == "assistant":
+                self.chat.add("ruby", "RUBY", msg["content"])
+        self.sidebar.refresh()
+        self.info.refresh()
+
     def _toggle_maximize(self):
         if self.root.state() == "zoomed":
             self.root.state("normal")
@@ -131,8 +151,9 @@ class RubyGUI:
             self.root.state("zoomed")
 
     def _bind_events(self):
-        self.root.bind("<Escape>", lambda e: self.root.destroy())
+        self.root.bind("<Escape>", self._on_escape)
         self.root.bind("<Control-m>", lambda e: self._on_mic_press())
+        self.root.bind("<Control-comma>", lambda e: self.settings.toggle())
         self.root.bind("<Control-Up>", lambda e: self._focus_input())
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
 
@@ -201,17 +222,26 @@ class RubyGUI:
 
         self.is_processing = True
         self.chat.show_thinking()
+        self.status_bar.show_cancel(True)
+        self.info.log_action(f"user: {text[:40]}")
         self.ctrl.think_async(text, self._on_response)
+
+    def _on_cancel_think(self):
+        self.ctrl.cancel_think()
+        self.status_bar.show_cancel(False)
 
     def _on_response(self, response: str):
         self.root.after(0, self.chat.clear_thinking)
+        self.root.after(0, lambda: self.info.log_action(f"ruby: {response[:40]}"))
         self.root.after(50, lambda: self.chat.add("ruby", "RUBY", response))
         self.root.after(100, self._speak_response, response)
         self.root.after(50, lambda: setattr(self, "is_processing", False))
+        self.root.after(50, lambda: self.status_bar.show_cancel(False))
 
     def _speak_response(self, text):
         if self.ctrl.voice and self.ctrl.voice.enabled:
             self.is_processing = True
+            self.status_bar.show_cancel(False)
             self.ctrl.speak(text)
             delay = max(2000, len(text) * 60)
             self.root.after(delay, lambda: setattr(self, "is_processing", False))
@@ -231,8 +261,8 @@ class RubyGUI:
         self.mic_active = False
         self.input.mic_btn.config(fg=Theme.TEXT_PRIMARY)
         if text:
-            self.input.set_text(text)
             self._on_send(text)
+        self.input.clear()
 
     def _on_heard(self, text, via_wake=False):
         if via_wake:
@@ -248,6 +278,7 @@ class RubyGUI:
         self.chat.add("system", "SYS",
             f"[*] voice {'on' if enabled else 'off'}")
         self.status_bar.refresh()
+        self.info.log_action(f"voice {'on' if enabled else 'off'}")
 
     def _toggle_wake(self):
         self.wake_enabled = not self.wake_enabled
@@ -280,6 +311,7 @@ class RubyGUI:
                 "[+] /status   system diagnostics\n"
                 "[+] /sidebar  toggle sidebar\n"
                 "[+] /info     toggle info panel\n"
+                "[+] /settings settings panel\n"
                 "[+] /mic      activate microphone")
 
         elif cmd == "/reset":
@@ -299,6 +331,9 @@ class RubyGUI:
 
         elif cmd == "/info":
             self.info.toggle()
+
+        elif cmd == "/settings":
+            self.settings.toggle()
 
         elif cmd == "/mic":
             self._on_mic_press()
@@ -323,11 +358,14 @@ class RubyGUI:
             return
         folders = [d.name for d in p.iterdir() if d.is_dir() and not d.name.startswith('.')]
         note_count = len(list(p.rglob("*.md")))
+        watcher = "active" if (self.ctrl.brain and hasattr(self.ctrl.brain, "_watcher")
+                               and self.ctrl.brain._watcher.is_running) else "off"
         info = (
             f"[*] vault: {p.name}\n"
             f"[*] path: {p}\n"
             f"[*] notes: {note_count}\n"
-            f"[*] folders: {', '.join(folders[:6])}"
+            f"[*] folders: {', '.join(folders[:6])}\n"
+            f"[*] auto-index: {watcher}"
         )
         self.chat.add("system", "VAULT", info)
 

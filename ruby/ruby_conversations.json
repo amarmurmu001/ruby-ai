@@ -1,0 +1,107 @@
+{
+  "conversations": [
+    {
+      "id": "1780302569645",
+      "title": "hi ruby",
+      "created": "2026-06-01 13:59",
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi ruby"
+        },
+        {
+          "role": "assistant",
+          "content": "Good morning, Boss. Software fully operational and standing by. How may I be of service today?"
+        },
+        {
+          "role": "user",
+          "content": "open youtube in brave"
+        },
+        {
+          "role": "assistant",
+          "content": "YouTube is opening in Brave now, Boss."
+        },
+        {
+          "role": "user",
+          "content": "search rust tutorial in youtube"
+        },
+        {
+          "role": "assistant",
+          "content": "(no output)"
+        },
+        {
+          "role": "user",
+          "content": "search Amar murmu on YouTube"
+        },
+        {
+          "role": "assistant",
+          "content": "Screenshot error: tesseract is not installed or it's not in your PATH. See README file for more information."
+        },
+        {
+          "role": "user",
+          "content": "search Amar murmu on YouTube brave"
+        },
+        {
+          "role": "assistant",
+          "content": "(no output)"
+        },
+        {
+          "role": "user",
+          "content": "search Amar murmu"
+        },
+        {
+          "role": "assistant",
+          "content": "Screenshot saved to C:\\Users\\iron5\\AppData\\Local\\Temp\\ruby_screenshot.png"
+        },
+        {
+          "role": "user",
+          "content": "search Amar murmu on YouTube Brave"
+        },
+        {
+          "role": "assistant",
+          "content": "Google returned no results. The search API may be rate-limited."
+        },
+        {
+          "role": "user",
+          "content": "search on YouTube Amar"
+        },
+        {
+          "role": "assistant",
+          "content": "(no output)"
+        },
+        {
+          "role": "user",
+          "content": "hay Rubi what's up"
+        },
+        {
+          "role": "assistant",
+          "content": "At your service, Boss. Just waiting for your command. Ready to handle anything you throw my way. What can I do for you?"
+        },
+        {
+          "role": "user",
+          "content": "take a screenshot and open the file"
+        },
+        {
+          "role": "assistant",
+          "content": "Cancelled."
+        },
+        {
+          "role": "user",
+          "content": "take a screenshot and open d"
+        },
+        {
+          "role": "assistant",
+          "content": "Screenshot saved to C:\\Users\\iron5\\AppData\\Local\\Temp\\ruby_screenshot.png"
+        },
+        {
+          "role": "user",
+          "content": "now open the screenshot"
+        },
+        {
+          "role": "assistant",
+          "content": "Opened: C:\\Users\\iron5\\AppData\\Local\\Temp\\ruby_screenshot.png"
+        }
+      ]
+    }
+  ]
+}

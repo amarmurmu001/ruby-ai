@@ -59,6 +59,8 @@ class Controller:
         return "Acknowledged."
 
     def think_async(self, text: str, callback):
+        if self.brain:
+            self.brain._cancel_requested.clear()
         def _run():
             try:
                 result = self.think(text)
@@ -66,6 +68,10 @@ class Controller:
             except Exception as e:
                 callback(f"[ERROR] {e}")
         threading.Thread(target=_run, daemon=True).start()
+
+    def cancel_think(self):
+        if self.brain:
+            self.brain.cancel()
 
     def speak(self, text: str):
         if self.voice and self.voice.enabled:
@@ -98,6 +104,8 @@ class Controller:
     def shutdown(self):
         if self.listener:
             self.listener.stop()
+        if self.brain:
+            self.brain.shutdown()
 
     @property
     def has_mic(self) -> bool:

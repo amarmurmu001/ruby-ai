@@ -22,6 +22,7 @@ class Theme:
     SURFACE_DARK = "#1a1a1a"
 
     FONT_FAMILY = "Consolas"
+    FONT_MONO = "Consolas"
 
     FONT_SIZES = {
         "title": 14,

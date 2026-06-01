@@ -1,4 +1,6 @@
 import logging
+from datetime import datetime
+from pathlib import Path
 from .base import Tool
 from config.settings import settings
 from ruby.memory.obsidian import ObsidianMemory
@@ -78,3 +80,54 @@ class JournalEntry(Tool):
         mem = ObsidianMemory()
         path = mem.journal_today(content)
         return f"Journal entry saved: {path}"
+
+
+class VaultSearch(Tool):
+    name = "vault_search"
+    description = "Search all notes in the entire Obsidian vault (not just RubyMemory). Full-text search with filename, path, and content snippet."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Search query — case-insensitive"},
+            "max_results": {"type": "integer", "description": "Max results to return (default 5)"}
+        },
+        "required": ["query"]
+    }
+
+    def execute(self, query: str, max_results: int = 5) -> str:
+        vault = settings.OBSIDIAN_VAULT_PATH
+        if not vault.exists():
+            return f"Vault not found at {vault}"
+
+        results = []
+        query_lower = query.lower()
+        for f in sorted(vault.rglob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
+            if len(results) >= max_results:
+                break
+            try:
+                content = f.read_text(encoding="utf-8")
+                if query_lower in content.lower():
+                    rel = f.relative_to(vault)
+                    # Find first occurrence for snippet
+                    idx = content.lower().find(query_lower)
+                    start = max(0, idx - 100)
+                    end = min(len(content), idx + len(query) + 100)
+                    snippet = content[start:end].replace("\n", " ")
+                    if len(snippet) > 200:
+                        snippet = snippet[:200] + "..."
+                    results.append({
+                        "path": str(rel),
+                        "modified": datetime.fromtimestamp(f.stat().st_mtime).strftime("%Y-%m-%d %H:%M"),
+                        "snippet": snippet.strip(),
+                    })
+            except Exception:
+                continue
+
+        if not results:
+            return f"No results found for '{query}' in vault."
+
+        lines = [f"Found {len(results)} result(s) for '{query}':\n"]
+        for r in results:
+            lines.append(f"[{r['path']}] ({r['modified']})")
+            lines.append(f"> {r['snippet']}\n")
+        return "\n".join(lines)

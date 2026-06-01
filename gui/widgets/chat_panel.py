@@ -1,3 +1,4 @@
+import re
 import tkinter as tk
 from ..theme import Theme
 
@@ -44,23 +45,62 @@ class ChatPanel:
         self.text.tag_config("voice", foreground=Theme.TEXT_DIM,
                              font=(Theme.FONT_FAMILY, 10, "italic"))
 
+        self.text.tag_config("bold", font=(Theme.FONT_FAMILY, Theme.FONT_SIZES["body"], "bold"))
+        self.text.tag_config("code", font=(Theme.FONT_MONO, Theme.FONT_SIZES["caption"]),
+                             foreground=Theme.WARNING, spacing1=2, spacing2=2, spacing3=2)
+        self.text.tag_config("codeblock", font=(Theme.FONT_MONO, Theme.FONT_SIZES["caption"]),
+                             foreground=Theme.TEXT_SECONDARY, spacing1=4, spacing2=4, spacing3=4,
+                             lmargin1=20, lmargin2=20)
+
     def add(self, msg_type: str, sender: str, text: str):
         self.text.configure(state="normal")
         if msg_type == "user":
             self.text.insert("end", f"[{sender}]\n", "user")
-            self.text.insert("end", f"{text}\n\n", "content")
+            self._insert_markdown(text)
+            self.text.insert("end", "\n")
         elif msg_type == "ruby":
             self.text.insert("end", f"[{sender}]\n", "ruby")
-            self.text.insert("end", f"{text}\n\n", "content")
+            self._insert_markdown(text)
+            self.text.insert("end", "\n")
         elif msg_type == "system":
             self.text.insert("end", f"{text}\n\n", "system")
         elif msg_type == "voice":
             self.text.insert("end", f"{text}\n\n", "voice")
         elif msg_type == "error":
             self.text.insert("end", f"[{sender} error]\n", "error")
-            self.text.insert("end", f"{text}\n\n", "content")
+            self._insert_markdown(text)
+            self.text.insert("end", "\n")
         self.text.see("end")
         self.text.configure(state="disabled")
+
+    def _insert_markdown(self, text: str):
+        pos = 0
+        while pos < len(text):
+            codeblock = re.search(r"```(\w*)\n(.*?)```", text[pos:], re.DOTALL)
+            if codeblock:
+                before = text[pos:pos + codeblock.start()]
+                if before:
+                    self._insert_inline(before)
+                offset = self.text.index("end-1c")
+                lang = codeblock.group(1)
+                code = codeblock.group(2).rstrip()
+                self.text.insert("end", f"[code: {lang or 'text'}]\n")
+                self.text.insert("end", code + "\n", "codeblock")
+                self.text.insert("end", "[/code]\n")
+                pos += codeblock.end()
+            else:
+                self._insert_inline(text[pos:])
+                break
+
+    def _insert_inline(self, text: str):
+        parts = re.split(r"(\*\*.*?\*\*|`[^`]+`)", text)
+        for p in parts:
+            if p.startswith("**") and p.endswith("**"):
+                self.text.insert("end", p[2:-2], "bold")
+            elif p.startswith("`") and p.endswith("`"):
+                self.text.insert("end", p[1:-1], "code")
+            else:
+                self.text.insert("end", p)
 
     def show_thinking(self):
         self.text.configure(state="normal")

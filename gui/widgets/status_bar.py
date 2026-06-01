@@ -6,13 +6,15 @@ from ..theme import Theme
 class StatusBar:
     HEIGHT = 24
 
-    def __init__(self, parent, controller):
+    def __init__(self, parent, controller, on_cancel=None):
         self.controller = controller
+        self.on_cancel = on_cancel
         self.frame = tk.Frame(parent, bg=Theme.BG_MED, height=self.HEIGHT)
         self.frame.grid(row=0, column=0, sticky="ew")
         self.frame.grid_propagate(False)
 
         self._labels = []
+        self._cancel_btn = None
         self._build()
 
     def _build(self):
@@ -39,7 +41,24 @@ class StatusBar:
             lbl.pack(side="left")
             self._labels.append((key, lbl, editable))
 
+        cancel_f = (Theme.FONT_FAMILY, 9, "bold")
+        self._cancel_btn = tk.Label(items, text="", font=cancel_f,
+                                    fg=Theme.ERROR, bg=Theme.BG_MED, cursor="hand2")
+        self._cancel_btn.pack(side="right", padx=(10, 0))
+        self._cancel_btn.bind("<Button-1>", lambda e: self._on_cancel_click())
+        self._cancel_btn.bind("<Enter>", lambda e: self._cancel_btn.config(
+            fg=Theme.TEXT_PRIMARY))
+        self._cancel_btn.bind("<Leave>", lambda e: self._cancel_btn.config(
+            fg=Theme.ERROR))
+
         self._update_clock()
+
+    def _on_cancel_click(self):
+        if self.on_cancel:
+            self.on_cancel()
+
+    def show_cancel(self, show: bool):
+        self._cancel_btn.config(text="[✕] cancel" if show else "")
 
     def refresh(self):
         for entry in self._labels:
@@ -67,4 +86,4 @@ class StatusBar:
             if entry[0] == "clock":
                 entry[1].config(text=now)
                 break
-        self.frame.after(5000, self._update_clock)
+        self.frame.after(1000, self._update_clock)

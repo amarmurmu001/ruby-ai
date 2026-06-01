@@ -1,7 +1,14 @@
 import logging
+import json
+import time
+import os
+import threading
+from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger("ruby.brain")
+
+CONV_FILE = Path(__file__).parent / "ruby_conversations.json"
 
 
 class Brain:
@@ -9,10 +16,15 @@ class Brain:
         self.llm = None
         self.custom = None
         self.registry = None
-        self.conversation_history = []
+        self.conversations = []
+        self._current_id = None
+        self._cancel_requested = threading.Event()
         self._init_llm()
         self._init_registry()
         self._init_custom()
+        self._load_conversations()
+        self._ensure_current()
+        self.start_vault_watcher()
 
     def _init_llm(self):
         try:
@@ -104,13 +116,97 @@ class Brain:
 
     def _register_knowledge_tools(self):
         try:
-            from ruby.tools.knowledge_tools import SaveMemory, RecallMemory, ListMemories, JournalEntry
+            from ruby.tools.knowledge_tools import SaveMemory, RecallMemory, ListMemories, JournalEntry, VaultSearch
             self.registry.register(SaveMemory())
             self.registry.register(RecallMemory())
             self.registry.register(ListMemories())
             self.registry.register(JournalEntry())
+            self.registry.register(VaultSearch())
         except Exception as e:
             logger.warning("knowledge tools: %s", e)
+
+    def start_vault_watcher(self):
+        try:
+            from ruby.memory.watcher import VaultWatcher
+            self._watcher = VaultWatcher(brain=self)
+            self._watcher.start()
+        except Exception as e:
+            logger.warning("Vault watcher init: %s", e)
+
+    def _load_conversations(self):
+        try:
+            if CONV_FILE.exists():
+                data = json.loads(CONV_FILE.read_text(encoding="utf-8"))
+                self.conversations = data.get("conversations", [])
+                logger.info("Loaded %d conversations", len(self.conversations))
+        except Exception as e:
+            logger.warning("Failed to load conversations: %s", e)
+            self.conversations = []
+
+    def _save_conversations(self):
+        try:
+            CONV_FILE.write_text(
+                json.dumps({"conversations": self.conversations}, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            logger.warning("Failed to save conversations: %s", e)
+
+    def _ensure_current(self):
+        if not self.conversations:
+            self._new_conversation()
+
+    def _new_conversation(self, title: str = "New chat"):
+        conv = {
+            "id": str(int(time.time() * 1000)),
+            "title": title,
+            "created": time.strftime("%Y-%m-%d %H:%M"),
+            "messages": [],
+        }
+        self.conversations.insert(0, conv)
+        self._current_id = conv["id"]
+        self._save_conversations()
+        return conv["id"]
+
+    def _current_messages(self) -> list:
+        for c in self.conversations:
+            if c["id"] == self._current_id:
+                return c["messages"]
+        if self.conversations:
+            self._current_id = self.conversations[0]["id"]
+            return self.conversations[0]["messages"]
+        self._new_conversation()
+        return self.conversations[0]["messages"]
+
+    def _update_title(self, user_input: str):
+        for c in self.conversations:
+            if c["id"] == self._current_id:
+                if c["title"] == "New chat":
+                    c["title"] = user_input[:50] + ("..." if len(user_input) > 50 else "")
+                break
+
+    def switch_conversation(self, conv_id: str) -> bool:
+        for c in self.conversations:
+            if c["id"] == conv_id:
+                self._current_id = conv_id
+                return True
+        return False
+
+    def delete_conversation(self, conv_id: str) -> bool:
+        for i, c in enumerate(self.conversations):
+            if c["id"] == conv_id:
+                self.conversations.pop(i)
+                if self._current_id == conv_id:
+                    self._ensure_current()
+                self._save_conversations()
+                return True
+        return False
+
+    def get_conversations(self) -> list:
+        return [
+            {"id": c["id"], "title": c["title"], "created": c["created"], "active": c["id"] == self._current_id}
+            for c in self.conversations
+        ]
 
     def _tool_defs(self):
         if not self.registry:
@@ -130,20 +226,23 @@ class Brain:
             return "Tool system unavailable"
         return self.registry.execute(func_name, **args)
 
-    def _tool_calling_loop(self, user_input: str, max_rounds: int = 5) -> str:
+    def _tool_calling_loop(self, user_input: str, max_rounds: int = 5, vault_context: str = "") -> str:
         tool_defs = self._tool_defs()
-        messages = list(self.conversation_history)
+        messages = list(self._current_messages())
+        if vault_context:
+            messages.insert(0, {"role": "system", "content": f"Relevant vault context:\n{vault_context}"})
         messages.append({"role": "user", "content": user_input})
 
         for _ in range(max_rounds):
+            if self._cancel_requested.is_set():
+                self._cancel_requested.clear()
+                return "Cancelled."
             raw = self.llm.chat(messages, tools=tool_defs)
             content = raw.get("content")
             tool_calls = raw.get("tool_calls")
             has_content = bool(content and content.strip())
             has_tc = bool(tool_calls)
             logger.info("LLM round: content=%s, tools=%s", bool(content), bool(tool_calls))
-            if has_content and content:
-                logger.info("LLM content preview: %s...", content[:80])
 
             if has_tc:
                 pass
@@ -151,38 +250,57 @@ class Brain:
                 return content
             else:
                 if messages and messages[-1].get("role") == "tool":
-                    last = messages[-1]["content"]
-                    return last
+                    return messages[-1]["content"]
                 return "Done."
 
             for tc in tool_calls:
                 tool_result = self._execute_tool_call(tc)
                 logger.info("Tool result: %s", tool_result[:100])
                 clean_tc = {k: v for k, v in tc.items() if k != "index"}
-                messages.append({
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": [clean_tc]
-                })
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.get("id", ""),
-                    "content": tool_result
-                })
+                messages.append({"role": "assistant", "content": None, "tool_calls": [clean_tc]})
+                messages.append({"role": "tool", "tool_call_id": tc.get("id", ""), "content": tool_result})
 
             tool_defs = None
 
         logger.warning("Tool calling loop exhausted after %d rounds", max_rounds)
         return "I couldn't complete the full task. Try rephrasing."
 
+    def _vault_context(self, query: str, max_chars: int = 2000) -> str:
+        try:
+            from ruby.memory.embeddings import VectorMemory
+            from ruby.memory.obsidian import ObsidianMemory
+            parts = []
+            vec = None
+            if self.custom:
+                try:
+                    vec = VectorMemory(self.custom)
+                    ctx = vec.get_context(query, max_chars)
+                    if ctx:
+                        parts.append(ctx)
+                except Exception:
+                    pass
+            try:
+                om = ObsidianMemory()
+                ctx = om.get_context(query, max_chars)
+                if ctx:
+                    parts.append(ctx)
+            except Exception:
+                pass
+            return "\n\n".join(parts)[:max_chars]
+        except Exception:
+            return ""
+
     def think(self, user_input: str, context: Optional[str] = None) -> str:
         if self.llm:
             try:
-                ctx = self._build_context(context)
-                reply = self._tool_calling_loop(user_input)
+                vault_ctx = self._vault_context(user_input)
+                reply = self._tool_calling_loop(user_input, vault_context=vault_ctx)
                 if reply:
-                    self.conversation_history.append({"role": "user", "content": user_input})
-                    self.conversation_history.append({"role": "assistant", "content": reply})
+                    msgs = self._current_messages()
+                    msgs.append({"role": "user", "content": user_input})
+                    msgs.append({"role": "assistant", "content": reply})
+                    self._update_title(user_input)
+                    self._save_conversations()
                     self._learn(user_input, reply)
                     return reply
                 logger.warning("LLM returned empty")
@@ -191,32 +309,14 @@ class Brain:
 
         if self.custom:
             reply = self.custom.think(user_input, context)
-            self.conversation_history.append({"role": "user", "content": user_input})
-            self.conversation_history.append({"role": "assistant", "content": reply})
+            msgs = self._current_messages()
+            msgs.append({"role": "user", "content": user_input})
+            msgs.append({"role": "assistant", "content": reply})
+            self._update_title(user_input)
+            self._save_conversations()
             return reply
 
         return self._fallback_response(user_input)
-
-    def _build_context(self, context: Optional[str] = None) -> str:
-        parts = []
-        if context:
-            parts.append(context)
-        if self.custom:
-            try:
-                ctx = self.custom._build_context("")
-                if ctx:
-                    parts.append(ctx)
-            except Exception:
-                pass
-        if self.conversation_history:
-            recent = self.conversation_history[-4:]
-            lines = ["Recent conversation:"]
-            for msg in recent:
-                role = msg.get("role", "unknown")
-                content = msg.get("content", "")[:200]
-                lines.append(f"[{role}]: {content}")
-            parts.append("\n".join(lines))
-        return "\n\n".join(parts)
 
     def _learn(self, user_input: str, reply: str):
         if self.custom:
@@ -240,40 +340,29 @@ class Brain:
             return "I am Ruby. Custom neural network. No cloud. No APIs."
         return "Acknowledged. Processing locally."
 
-    def think_stream(self, user_input: str, context: Optional[str] = None):
-        response = self.think(user_input, context)
-        for word in response.split(" "):
-            yield word + " "
-
-    def structured_query(self, prompt: str) -> dict:
-        prompt_lower = prompt.lower()
-        if "remember" in prompt_lower or "save" in prompt_lower:
-            return {"action": "save_memory"}
-        if "time" in prompt_lower or "date" in prompt_lower:
-            return {"action": "get_time"}
-        return {"action": "chat"}
-
-    def generate_embedding(self, text: str) -> list:
-        return []
-
     def get_stats(self) -> dict:
-        if self.custom:
-            try:
-                return self.custom.get_stats()
-            except Exception:
-                pass
         tools = self.registry.list_names() if self.registry else []
+        msg_count = len(self._current_messages()) // 2
         return {
-            "conversations": len(self.conversation_history) // 2,
+            "conversations": len(self.conversations),
+            "current_messages": msg_count,
             "facts_learned": 0,
-            "vocabulary": 0,
-            "ngrams": 0,
-            "user_prefs": 0,
             "tools": len(tools),
             "tool_list": tools,
         }
 
+    def cancel(self):
+        self._cancel_requested.set()
+
+    def shutdown(self):
+        self.cancel()
+        try:
+            if hasattr(self, "_watcher") and self._watcher:
+                self._watcher.stop()
+        except Exception:
+            pass
+
     def reset(self):
         if self.custom:
             self.custom.reset()
-        self.conversation_history = []
+        self._new_conversation("New chat")

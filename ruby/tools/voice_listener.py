@@ -32,7 +32,7 @@ class VoiceListener:
             return False
 
     def _rms(self, frame: np.ndarray) -> float:
-        return np.sqrt(np.mean(frame.astype(np.float32) ** 2))
+        return float(np.sqrt(np.mean(frame.astype(np.float32) ** 2)))
 
     def listen_once(self, timeout: float = 10.0, phrase_limit: float = 15.0) -> str | None:
         if not self.available:
@@ -51,21 +51,27 @@ class VoiceListener:
             if not self._record_stop.is_set():
                 self._recording.append(indata.copy())
 
-        stream = sd.InputStream(
-            samplerate=self.SAMPLE_RATE,
-            channels=1,
-            dtype="int16",
-            callback=callback,
-        )
-        stream.start()
+        try:
+            stream = sd.InputStream(
+                samplerate=self.SAMPLE_RATE,
+                channels=1,
+                dtype="int16",
+                callback=callback,
+            )
+            stream.start()
+        except Exception as e:
+            logger.error("Failed to start audio stream: %s", e)
+            self._is_recording = False
+            return None
 
         start = time.time()
         while not self._record_stop.is_set() and time.time() - start < timeout:
-            if not self._recording:
+            if len(self._recording) < 2:
                 time.sleep(0.05)
                 continue
 
-            recent = np.concatenate(self._recording[-int(self.SILENCE_DURATION / self.CHUNK_SECONDS):], axis=0) if len(self._recording) > 1 else self._recording[-1]
+            window = int(self.SILENCE_DURATION / self.CHUNK_SECONDS)
+            recent = np.concatenate(self._recording[-window:], axis=0)
             level = self._rms(recent)
             elapsed = time.time() - start
 
@@ -88,7 +94,7 @@ class VoiceListener:
         stream.close()
         self._is_recording = False
 
-        if not self._recording:
+        if len(self._recording) < 1:
             return None
 
         audio = np.concatenate(self._recording, axis=0)
@@ -125,18 +131,19 @@ class VoiceListener:
         logger.info("Continuous listening started (wake: '%s')", wake_word)
 
     def _continuous_loop(self, callback, wake_word: str):
-        chunk_duration = 3.0
+        chunk_duration = 1.5
 
         while not self._continuous_stop.is_set():
-            chunk_duration = 3.0
+            n_samples = int(chunk_duration * self.SAMPLE_RATE)
+            recording = sd.rec(n_samples, samplerate=self.SAMPLE_RATE,
+                               channels=1, dtype="int16")
 
-            recording = sd.rec(
-                int(chunk_duration * self.SAMPLE_RATE),
-                samplerate=self.SAMPLE_RATE,
-                channels=1,
-                dtype="int16",
-            )
-            sd.wait()
+            deadline = time.time() + chunk_duration
+            while time.time() < deadline:
+                if self._continuous_stop.wait(0.2):
+                    sd.stop()
+                    logger.info("Wake loop stopped mid-chunk")
+                    return
 
             audio_bytes = recording.tobytes()
             audio_data = sr.AudioData(audio_bytes, self.SAMPLE_RATE, 2)
@@ -150,17 +157,12 @@ class VoiceListener:
             if text and wake_word in text:
                 cmd = text.split(wake_word, 1)[-1].strip()
                 logger.info("Wake word detected. Command: %s", cmd or "(none)")
-                if cmd:
-                    callback(cmd, via_wake=True)
-                else:
-                    callback("", via_wake=True)
-
-            if self._continuous_stop.wait(0.5):
-                break
+                callback(cmd, via_wake=True)
 
     def stop(self):
         self._continuous_stop.set()
         self._record_stop.set()
+        sd.stop()
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2)
-        logger.info("Continuous listening stopped")
+        logger.info("Listener stopped")
