@@ -37,6 +37,7 @@ async def serve_index():
     html = (HERE / "index.html").read_text(encoding="utf-8")
     return HTMLResponse(html)
 
+
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "deepseek/deepseek-v4-flash")
 SITE_URL = os.environ.get("SITE_URL", "https://ruby-ai.vercel.app")
