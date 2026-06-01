@@ -262,7 +262,7 @@ class RubyGUI:
         self.mic_btn.pack(side="left", padx=(6, 0))
         if can_hear:
             self.mic_btn.bind("<ButtonPress-1>", lambda e: self._start_listening_thread())
-            self.mic_btn.bind("<ButtonRelease-1>", lambda e: None)
+            self.mic_btn.bind("<ButtonRelease-1>", lambda e: self._release_mic())
             self.root.bind("<Control-m>", lambda e: self._start_listening_thread())
 
         send_btn = tk.Label(
@@ -401,11 +401,17 @@ class RubyGUI:
         self.status_label.config(text=">> LISTENING <<", fg=self.ERROR_COLOR)
         threading.Thread(target=self._listen_for_input, daemon=True).start()
 
+    def _release_mic(self):
+        if self.mic_active and self.listener:
+            self.listener.listen_stop()
+
     def _listen_for_input(self):
         text = self.listener.listen_once(timeout=8, phrase_limit=10)
         self.root.after(0, self._finish_listening, text)
 
     def _finish_listening(self, text):
+        if not self.mic_active:
+            return
         self.mic_active = False
         self.mic_btn.config(fg=self.TEXT_SECONDARY, text="[MIC]")
         self.status_label.config(text=">> SYSTEM ONLINE <<", fg=self.USER_COLOR)
